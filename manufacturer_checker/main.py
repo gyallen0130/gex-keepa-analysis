@@ -24,6 +24,14 @@ def main():
     parser.add_argument('--jan-limit',type=int)
     parser.add_argument('--bb-limit',type=int,default=200)
     parser.add_argument('--min-other-share',type=float,default=0.1)
+    parser.add_argument('--name-search',action='store_true',help='JANなしを商品名検索')
+    parser.add_argument('--name-limit',type=int,default=20,help='0は無制限')
+    parser.add_argument('--name-query-limit',type=int,choices=[1,2],default=2)
+    parser.add_argument('--name-token-budget',type=int,default=400,help='0は無制限')
+    parser.add_argument('--name-include-no-candidate',action='store_true')
+    parser.add_argument('--no-resume',action='store_true')
+    parser.add_argument('--force-research',action='store_true')
+    parser.add_argument('--review',help='確認入力を編集したExcel')
     args=parser.parse_args()
     if not os.environ.get('KEEPA_API_KEY'):parser.error('環境変数KEEPA_API_KEYを設定してください')
     if args.jan_start < 0 or (args.jan_limit is not None and args.jan_limit < 0) or args.bb_limit < 0 or not 0 <= args.min_other_share <= 100:
@@ -47,15 +55,23 @@ def main():
     else:
         if args.manufacturer != 'GEX':parser.error('他メーカーは--inputで商品マスタを指定してください')
         collector=GexCollector();products=collector.collect();collector_errors=collector.errors
-    with KeepaClient(os.environ['KEEPA_API_KEY']) as client:
-        matching=lookup_by_jan(products,client,start=args.jan_start,limit=args.jan_limit)
-        analysis=analyze_buybox(matching['asin_products'],client,limit=args.bb_limit,min_other_share=args.min_other_share)
-        # 同日再実行でも既存結果を上書きしない。
-        import re
-        name=re.sub(r'[^\w一-龥ぁ-んァ-ヶ-]+','_',args.manufacturer) or 'manufacturer'
-        stamp=datetime.now(ZoneInfo('Asia/Tokyo')).strftime('%Y%m%d_%H%M%S_%f')
-        path=write_excel(Path(args.output_dir)/f'{name}_{stamp}.xlsx',products,matching,analysis,collector_errors=collector_errors,tokens_consumed=client.total_tokens_consumed,input_warnings=input_warnings)
-    print(matching['summary']);print(f'ローカル保存完了: {path}')
+    from ui.colab_runner import run_research
+    from core.search_state import digest
+    state_path=Path(args.output_dir)/'state'/(digest(args.manufacturer)[:16]+'.json')
+    checkpoint=None
+    if drive_service is not None and args.name_search:
+        from output.drive import DriveSearchCheckpoint
+        checkpoint=DriveSearchCheckpoint(drive_service,args.manufacturer,args.drive_folder_id,state_path)
+        if not args.no_resume:checkpoint.restore()
+    path,report_path,report=run_research(products,os.environ['KEEPA_API_KEY'],args.manufacturer,
+        jan_limit=None if args.jan_limit==0 else args.jan_limit,jan_start=args.jan_start,
+        bb_limit=args.bb_limit,min_other_share=args.min_other_share,output_dir=args.output_dir,
+        collector_errors=collector_errors,input_warnings=input_warnings,
+        enable_name_search=args.name_search,name_limit=args.name_limit,name_query_limit=args.name_query_limit,
+        name_token_budget=args.name_token_budget,name_include_no_candidate=args.name_include_no_candidate,
+        state_path=state_path,state_sync=checkpoint.sync if checkpoint else None,
+        resume=not args.no_resume,force_research=args.force_research,review_path=args.review)
+    print(report);print(f'ローカル保存完了: {path}')
     if drive_service is not None:
         from output.drive import upload_result
         saved=upload_result(drive_service,path,args.manufacturer,args.drive_folder_id)

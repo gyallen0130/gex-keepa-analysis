@@ -2,6 +2,9 @@
 import math
 import requests
 import time
+class KeepaPermanentError(RuntimeError):
+    """認証・パラメータ等、同じ要求の再送で解消しないエラー。"""
+
 class KeepaTokenShortage(RuntimeError):
     """Keepaのトークン補充を待てば再実行できるエラー。"""
 
@@ -98,6 +101,8 @@ class KeepaClient:
                     self.last_tokens_left = error_data.get('tokensLeft', self.last_tokens_left)
                     self.refill_rate = error_data.get('refillRate', self.refill_rate)
                     raise KeepaTokenShortage(f"HTTP 429: {error_data.get('error') or 'Keepa API token shortage'}")
+                if 400 <= response.status_code < 500:
+                    raise KeepaPermanentError(f'Keepa HTTP {response.status_code}: キー・契約・パラメータを確認してください')
                 response.raise_for_status()
                 data = response.json()
                 if data.get('error'):
@@ -111,7 +116,7 @@ class KeepaClient:
                 self.total_tokens_consumed += consumed
                 self._log(f'残りトークン：{self.last_tokens_left} / 今回消費：{consumed}' + (f' / 補充速度：{self.refill_rate}/分' if self.refill_rate is not None else ''))
                 return data
-            except KeepaTokenShortage:
+            except (KeepaTokenShortage, KeepaPermanentError):
                 raise
             except Exception as e:
                 error_attempts += 1

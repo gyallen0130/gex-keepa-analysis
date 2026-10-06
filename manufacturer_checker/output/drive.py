@@ -67,3 +67,42 @@ def upload_result(service, local_path, manufacturer, parent_id=DEFAULT_PARENT_FO
     if folder['id'] not in verified.get('parents', []) or int(verified.get('size', -1)) != path.stat().st_size:
         raise RuntimeError('Drive保存の確認に失敗しました。ローカル結果は保持されています')
     return verified
+
+class DriveSearchCheckpoint:
+    """指定メーカーの_stateへ検索状態を復元・同期する。"""
+    def __init__(self, service, manufacturer, parent_id, local_path, *, media_factory=None):
+        self.service=service
+        self.media_factory=media_factory
+        manufacturer_folder=ensure_manufacturer_folder(service,manufacturer,parent_id)
+        self.folder=ensure_manufacturer_folder(service,'_state',manufacturer_folder['id'])
+        self.path=Path(local_path);self.file_id=None
+        query=f"'{_escape_query(self.folder['id'])}' in parents and trashed=false and name='name_search_v1.json'"
+        found=[];token=None
+        while True:
+            options=dict(q=query,fields='nextPageToken,files(id,name)',supportsAllDrives=True,includeItemsFromAllDrives=True)
+            if token:options['pageToken']=token
+            page=service.files().list(**options).execute();found.extend(page.get('files',[]))
+            token=page.get('nextPageToken')
+            if not token:break
+        if len(found)>1:raise ValueError('_state内に同名状態ファイルが複数あります')
+        if found:self.file_id=found[0]['id']
+    def restore(self):
+        if self.file_id:
+            data=self.service.files().get_media(fileId=self.file_id,supportsAllDrives=True).execute()
+            import json
+            json.loads(data)  # 不正JSONでローカル状態を上書きしない。
+            self.path.parent.mkdir(parents=True,exist_ok=True)
+            temp=self.path.with_suffix('.restore');temp.write_bytes(data);temp.replace(self.path)
+        return self.path
+    def sync(self,path):
+        factory=self.media_factory
+        if factory is None:
+            from googleapiclient.http import MediaFileUpload
+            factory=MediaFileUpload
+        media=factory(str(path),mimetype='application/json',resumable=True)
+        if self.file_id:
+            saved=self.service.files().update(fileId=self.file_id,media_body=media,fields='id,size',supportsAllDrives=True).execute()
+        else:
+            saved=self.service.files().create(body={'name':'name_search_v1.json','parents':[self.folder['id']]},media_body=media,fields='id,size',supportsAllDrives=True).execute()
+            self.file_id=saved['id']
+        if int(saved.get('size',-1))!=Path(path).stat().st_size:raise RuntimeError('検索状態のDrive同期を確認できませんでした')

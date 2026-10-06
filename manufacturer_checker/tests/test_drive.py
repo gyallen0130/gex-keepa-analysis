@@ -39,3 +39,19 @@ class Tests(unittest.TestCase):
  def test_escape_folder_name(self):
   service=Service();ensure_manufacturer_folder(service,"Maker's",'parent')
   self.assertIn("Maker\\'s",service.list_calls[0]['q'])
+
+class CheckpointTests(unittest.TestCase):
+ def test_restore_and_update_same_file(self):
+  from output.drive import DriveSearchCheckpoint
+  class StateService(Service):
+   def __init__(self):
+    super().__init__(pages=[{'files':[{'id':'maker'}]},{'files':[{'id':'state_folder'}]},{'files':[{'id':'state_file'}]}]);self.updates=[]
+   def get_media(self,**kw):return Request(b'{"version":1,"queries":{},"reviews":{}}')
+   def update(self,**kw):
+    self.updates.append(kw);return Request({'id':'state_file','size':str(self.path.stat().st_size)})
+  with tempfile.TemporaryDirectory() as d:
+   service=StateService();p=Path(d)/'state.json';service.path=p
+   cp=DriveSearchCheckpoint(service,'日仏商事','parent',p,media_factory=lambda *a,**kw:object())
+   cp.restore();self.assertTrue(p.exists());cp.sync(p)
+   self.assertEqual(service.updates[0]['fileId'],'state_file')
+   self.assertEqual(service.created,[])

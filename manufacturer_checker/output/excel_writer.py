@@ -11,12 +11,13 @@ def flatten(row):
         return {**row['product'], **{k:v for k,v in row.items() if k != 'product'}}
     return row
 
-def write_excel(path, products, matching, analysis, *, collector_errors=(), tokens_consumed=None, input_warnings=()):
+def write_excel(path, products, matching, analysis, *, collector_errors=(), tokens_consumed=None, input_warnings=(), name_matching=None):
     rows = analysis['rows']
     if len({r['asin'] for r in rows}) != len(rows):
         raise ValueError('ASIN重複が残っています')
     flat_rows = [{**(row['links'][0]['product'] if row['links'] else {}),
-                  **{k:v for k,v in row.items() if k not in ('amazon','links')}} for row in rows]
+                  **{k:v for k,v in row.items() if k not in ('amazon','links')},
+                  '照合方法':sorted({link['match_method'] for link in row['links']})} for row in rows]
     unresolved = [flatten(r) for r in matching['unresolved']]
     links = []
     for row in rows:
@@ -34,10 +35,15 @@ def write_excel(path, products, matching, analysis, *, collector_errors=(), toke
         'BB未確認':[r for r in flat_rows if r['判定'].startswith(('D：','F：'))],
         'ASIN商品対応':links,'商品取得エラー':list(collector_errors), '入力確認':list(input_warnings),
         'Keepa取得エラー':matching['errors']+analysis['errors']}
+    if name_matching is not None:
+        sheets.update({'商品名検索候補':name_matching['candidates'],
+            '確認入力':name_matching['candidates'], '商品名検索状況':name_matching['statuses'],
+            '商品名検索エラー':name_matching['errors']})
+        summary.append({'項目':'商品名候補の確認','値':'確認入力シートの採用欄を採用／除外／保留に編集し、次回アップロード。未承認候補は分析対象外。'})
     wb=Workbook();wb.remove(wb.active)
     for name, records in sheets.items():
         ws=wb.create_sheet(name)
-        headers=list(dict.fromkeys(k for record in records for k in record)) or ['情報']
+        headers=list(dict.fromkeys(k for record in records for k in record)) or (['source_id','input_hash','ASIN','採用'] if name=='確認入力' else ['情報'])
         ws.append(headers)
         for record in records:
             values=[]
@@ -50,6 +56,13 @@ def write_excel(path, products, matching, analysis, *, collector_errors=(), toke
             # 外部商品名が数式として実行されないよう文字列を明示。
             for cell in ws[ws.max_row]:
                 if isinstance(cell.value,str):cell.data_type='s'
+        if name=='確認入力':
+            from openpyxl.worksheet.datavalidation import DataValidation
+            validation=DataValidation(type='list',formula1='"採用,除外,保留"',allow_blank=True)
+            validation.error='採用／除外／保留を選択してください';validation.showErrorMessage=True
+            ws.add_data_validation(validation)
+            col=get_column_letter(headers.index('採用')+1)
+            validation.add(f'{col}2:{col}{max(2,ws.max_row)}')
         ws.freeze_panes='A2';ws.auto_filter.ref=ws.dimensions;ws.sheet_view.showGridLines=False
         for cell in ws[1]:
             cell.font=Font(bold=True,color='FFFFFF');cell.fill=PatternFill('solid',fgColor='1F4E78');cell.alignment=Alignment(wrap_text=True)

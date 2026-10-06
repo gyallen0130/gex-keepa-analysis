@@ -7,12 +7,15 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 FIELDS = ('manufacturer','brand','product_name','jan','model_number','manufacturer_code',
-          'category','capacity','size','color','pack_quantity','official_url')
+          'category','capacity','size','color','pack_quantity','official_url',
+          'search_keywords','unit_capacity','sales_units','variant')
 ALIASES = {
  'manufacturer':['メーカー','メーカー名','製造元'], 'brand':['ブランド','ブランド名'],
  'product_name':['商品名','品名','製品名','公式商品名'],
  'jan':['JAN','JANコード','JAN/EAN','EAN','EANコード','バーコード'],
  'model_number':['型番','メーカー型番'], 'manufacturer_code':['商品コード','品番','メーカー商品コード'],
+ 'search_keywords':['検索キーワード'], 'unit_capacity':['単品容量'],
+ 'sales_units':['販売単位数'], 'variant':['味・種類'],
  'category':['カテゴリ','カテゴリー'], 'capacity':['容量','内容量'], 'size':['サイズ'],
  'color':['色','カラー'], 'pack_quantity':['入数','入り数','数量'],
  'official_url':['公式URL','公式商品URL','公式商品ページ'],
